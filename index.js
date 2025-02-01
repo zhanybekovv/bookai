@@ -1,67 +1,25 @@
 require("dotenv").config();
 const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const { OpenAI } = require("openai");
-const fs = require("fs");
-const { createWriteStream } = require("fs");
+const cors = require("cors");
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+app.use(cors());
+app.use(express.json());
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-io.on("connection", (socket) => {
-    console.log("Client connected");
-
-    socket.on("audio_stream", async (audioBuffer) => {
-        try {
-            // 🔥 Transcribe Speech in Real Time
-            const transcribeRes = await openai.audio.transcriptions.create({
-                file: fs.createReadStream(audioBuffer), // Receiving audio in chunks
-                model: "whisper-1"
-            });
-            const userText = transcribeRes.text;
-            console.log("User:", userText);
-
-            // 🔥 GPT-4 Streaming Response
-            const gptRes = await openai.chat.completions.create({
-                model: "gpt-4",
-                messages: [{ role: "system", content: "You are a real-time AI assistant." },
-                           { role: "user", content: userText }],
-                stream: true
-            });
-
-            let aiResponse = "";
-            for await (const chunk of gptRes) {
-                aiResponse += chunk.choices[0].delta?.content || "";
-                socket.emit("gpt_response", aiResponse); // Send real-time text response
-            }
-
-            console.log("AI:", aiResponse);
-
-            // 🔥 Stream Text-to-Speech (TTS)
-            const ttsStream = await openai.audio.speech.create({
-                model: "tts-1",
-                voice: "alloy",
-                input: aiResponse,
-                stream: true
-            });
-
-            const audioStream = createWriteStream(`outputs/audio_${Date.now()}.mp3`);
-            for await (const chunk of ttsStream) {
-                audioStream.write(chunk);
-                socket.emit("audio_response", chunk); // Send AI voice chunks in real time
-            }
-
-        } catch (error) {
-            console.error("Error:", error);
-            socket.emit("error", { message: "Something went wrong." });
-        }
-    });
-
-    socket.on("disconnect", () => console.log("Client disconnected"));
+app.get("/session", async (req, res) => {
+  const r = await fetch("https://api.openai.com/v1/realtime/sessions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-realtime-preview-2024-12-17",
+      voice: "verse",
+    }),
+  });
+  const data = await r.json();
+  res.send(data);
 });
 
-server.listen(5000, () => console.log("Server running on http://localhost:5000"));
+app.listen(5000);
